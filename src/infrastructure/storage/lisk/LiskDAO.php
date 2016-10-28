@@ -1339,11 +1339,12 @@ abstract class LiskDAO extends Phobject {
    * @task   hook
    */
   public function generatePHID() {
-    throw new Exception(
-      pht(
-        'To use %s, you need to overload %s to perform PHID generation.',
-        'CONFIG_AUX_PHID',
-        'generatePHID()'));
+    $type = $this->getPHIDType();
+    return PhabricatorPHID::generateNewPHID($type);
+  }
+
+  public function getPHIDType() {
+    throw new PhutilMethodNotImplementedException();
   }
 
 
@@ -1621,9 +1622,54 @@ abstract class LiskDAO extends Phobject {
     return (bool)self::$transactionIsolationLevel;
   }
 
-  public static function closeAllConnections() {
-    self::$connections = array();
+  /**
+   * Close any connections with no recent activity.
+   *
+   * Long-running processes can use this method to clean up connections which
+   * have not been used recently.
+   *
+   * @param int Close connections with no activity for this many seconds.
+   * @return void
+   */
+  public static function closeInactiveConnections($idle_window) {
+    $connections = self::$connections;
+
+    $now = PhabricatorTime::getNow();
+    foreach ($connections as $key => $connection) {
+      $last_active = $connection->getLastActiveEpoch();
+
+      $idle_duration = ($now - $last_active);
+      if ($idle_duration <= $idle_window) {
+        continue;
+      }
+
+      self::closeConnection($key);
+    }
   }
+
+
+  public static function closeAllConnections() {
+    $connections = self::$connections;
+
+    foreach ($connections as $key => $connection) {
+      self::closeConnection($key);
+    }
+  }
+
+  private static function closeConnection($key) {
+    if (empty(self::$connections[$key])) {
+      throw new Exception(
+        pht(
+          'No database connection with connection key "%s" exists!',
+          $key));
+    }
+
+    $connection = self::$connections[$key];
+    unset(self::$connections[$key]);
+
+    $connection->close();
+  }
+
 
 /* -(  Utilities  )---------------------------------------------------------- */
 
@@ -1831,7 +1877,6 @@ abstract class LiskDAO extends Phobject {
     return $this->getConfigOption(self::CONFIG_BINARY);
   }
 
-
   public function getSchemaColumns() {
     $custom_map = $this->getConfigOption(self::CONFIG_COLUMN_SCHEMA);
     if (!$custom_map) {
@@ -1951,6 +1996,23 @@ abstract class LiskDAO extends Phobject {
     }
 
     return $custom_map + $default_map;
+  }
+
+  public function getColumnMaximumByteLength($column) {
+    $map = $this->getSchemaColumns();
+
+    if (!isset($map[$column])) {
+      throw new Exception(
+        pht(
+          'Object (of class "%s") does not have a column "%s".',
+          get_class($this),
+          $column));
+    }
+
+    $data_type = $map[$column];
+
+    return id(new PhabricatorStorageSchemaSpec())
+      ->getMaximumByteLengthForDataType($data_type);
   }
 
 }

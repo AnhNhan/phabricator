@@ -406,6 +406,10 @@ abstract class PhabricatorApplicationSearchEngine extends Phobject {
     return $this->getURI('query/edit/');
   }
 
+  public function getQueryBaseURI() {
+    return $this->getURI('');
+  }
+
 
   /**
    * Return the URI to a path within the application. Used to construct default
@@ -1094,12 +1098,30 @@ abstract class PhabricatorApplicationSearchEngine extends Phobject {
       }
     }
 
+    $valid_constraints = array();
+    foreach ($fields as $field) {
+      foreach ($field->getValidConstraintKeys() as $key) {
+        $valid_constraints[$key] = true;
+      }
+    }
+
+    foreach ($constraints as $key => $constraint) {
+      if (empty($valid_constraints[$key])) {
+        throw new Exception(
+          pht(
+            'Constraint "%s" is not a valid constraint for this query.',
+            $key));
+      }
+    }
+
     foreach ($fields as $field) {
       if (!$field->getValueExistsInConduitRequest($constraints)) {
         continue;
       }
 
-      $value = $field->readValueFromConduitRequest($constraints);
+      $value = $field->readValueFromConduitRequest(
+        $constraints,
+        $request->getIsStrictlyTyped());
       $saved_query->setParameter($field->getKey(), $value);
     }
 
@@ -1138,6 +1160,11 @@ abstract class PhabricatorApplicationSearchEngine extends Phobject {
     if ($objects) {
       $field_extensions = $this->getConduitFieldExtensions();
 
+      $extension_data = array();
+      foreach ($field_extensions as $key => $extension) {
+        $extension_data[$key] = $extension->loadExtensionConduitData($objects);
+      }
+
       $attachment_data = array();
       foreach ($attachments as $key => $attachment) {
         $attachment_data[$key] = $attachment->loadAttachmentData(
@@ -1148,7 +1175,8 @@ abstract class PhabricatorApplicationSearchEngine extends Phobject {
       foreach ($objects as $object) {
         $field_map = $this->getObjectWireFieldsForConduit(
           $object,
-          $field_extensions);
+          $field_extensions,
+          $extension_data);
 
         $attachment_map = array();
         foreach ($attachments as $key => $attachment) {
@@ -1312,11 +1340,13 @@ abstract class PhabricatorApplicationSearchEngine extends Phobject {
 
   protected function getObjectWireFieldsForConduit(
     $object,
-    array $field_extensions) {
+    array $field_extensions,
+    array $extension_data) {
 
     $fields = array();
-    foreach ($field_extensions as $extension) {
-      $fields += $extension->getFieldValuesForConduit($object);
+    foreach ($field_extensions as $key => $extension) {
+      $data = idx($extension_data, $key, array());
+      $fields += $extension->getFieldValuesForConduit($object, $data);
     }
 
     return $fields;
@@ -1364,6 +1394,10 @@ abstract class PhabricatorApplicationSearchEngine extends Phobject {
 
   protected function getNewUserBody() {
     return null;
+  }
+
+  public function newUseResultsActions(PhabricatorSavedQuery $saved) {
+    return array();
   }
 
 }

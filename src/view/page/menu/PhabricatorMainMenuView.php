@@ -23,6 +23,17 @@ final class PhabricatorMainMenuView extends AphrontView {
     return $this->controller;
   }
 
+  private function getFaviconURI($type = null) {
+    switch ($type) {
+      case 'message':
+        return celerity_get_resource_uri('/rsrc/favicons/favicon-message.ico');
+      case 'mention':
+        return celerity_get_resource_uri('/rsrc/favicons/favicon-mention.ico');
+      default:
+        return celerity_get_resource_uri('/rsrc/favicons/favicon.ico');
+    }
+  }
+
   public function render() {
     $viewer = $this->getViewer();
 
@@ -297,11 +308,13 @@ final class PhabricatorMainMenuView extends AphrontView {
   }
 
   private function renderPhabricatorLogo() {
-    $style_logo = null;
-    $custom_header = PhabricatorEnv::getEnvConfig('ui.custom-header');
+    $custom_header = PhabricatorCustomLogoConfigType::getLogoImagePHID();
+
+    $logo_style = array();
     if ($custom_header) {
       $cache = PhabricatorCaches::getImmutableCache();
-      $cache_key_logo = 'ui.custom-header.logo-phid.v1.'.$custom_header;
+      $cache_key_logo = 'ui.custom-header.logo-phid.v3.'.$custom_header;
+
       $logo_uri = $cache->getKey($cache_key_logo);
       if (!$logo_uri) {
         $file = id(new PhabricatorFileQuery())
@@ -313,20 +326,31 @@ final class PhabricatorMainMenuView extends AphrontView {
           $cache->setKey($cache_key_logo, $logo_uri);
         }
       }
-      if ($logo_uri) {
-        $style_logo =
-          'background-size: 96px 40px; '.
-          'background-position: 0px 0px; '.
-          'background-image: url('.$logo_uri.');';
-      }
+
+      $logo_style[] = 'background-size: 40px 40px;';
+      $logo_style[] = 'background-position: 0 0;';
+      $logo_style[] = 'background-image: url('.$logo_uri.')';
     }
 
-    $color = PhabricatorEnv::getEnvConfig('ui.header-color');
-    if ($color == 'light') {
-      $color = 'dark';
-    } else {
-      $color = 'light';
+    $logo_node = phutil_tag(
+      'span',
+      array(
+        'class' => 'phabricator-main-menu-eye',
+        'style' => implode(' ', $logo_style),
+      ));
+
+
+    $wordmark_text = PhabricatorCustomLogoConfigType::getLogoWordmark();
+    if (!strlen($wordmark_text)) {
+      $wordmark_text = pht('Phabricator');
     }
+
+    $wordmark_node = phutil_tag(
+      'span',
+      array(
+        'class' => 'phabricator-wordmark',
+      ),
+      $wordmark_text);
 
     return phutil_tag(
       'a',
@@ -341,19 +365,8 @@ final class PhabricatorMainMenuView extends AphrontView {
             'aural' => true,
           ),
           pht('Home')),
-        phutil_tag(
-          'span',
-          array(
-            'class' => 'sprite-menu phabricator-main-menu-eye '.$color.'-eye',
-          ),
-          ''),
-          phutil_tag(
-          'span',
-          array(
-            'class' => 'sprite-menu phabricator-main-menu-logo '.$color.'-logo',
-            'style' => $style_logo,
-          ),
-          ''),
+        $logo_node,
+        $wordmark_node,
       ));
   }
 
@@ -438,6 +451,9 @@ final class PhabricatorMainMenuView extends AphrontView {
           'countType'   => $conpherence_data['countType'],
           'countNumber' => $message_count_number,
           'unreadClass' => 'message-unread',
+          'favicon'     => $this->getFaviconURI('default'),
+          'message_favicon' => $this->getFaviconURI('message'),
+          'mention_favicon' => $this->getFaviconURI('mention'),
         ));
 
       $message_notification_dropdown = javelin_tag(
@@ -516,6 +532,9 @@ final class PhabricatorMainMenuView extends AphrontView {
           'countType'   => $notification_data['countType'],
           'countNumber' => $count_number,
           'unreadClass' => 'alert-unread',
+          'favicon'     => $this->getFaviconURI('default'),
+          'message_favicon' => $this->getFaviconURI('message'),
+          'mention_favicon' => $this->getFaviconURI('mention'),
         ));
 
       $notification_dropdown = javelin_tag(
@@ -529,15 +548,103 @@ final class PhabricatorMainMenuView extends AphrontView {
         '');
     }
 
+    // Admin Level Urgent Notification Channel
+    $setup_tag = '';
+    $setup_notification_dropdown = '';
+    if ($viewer && $viewer->getIsAdmin()) {
+      $open = PhabricatorSetupCheck::getOpenSetupIssueKeys();
+      if ($open) {
+        $setup_id = celerity_generate_unique_node_id();
+        $setup_count_id = celerity_generate_unique_node_id();
+        $setup_dropdown_id = celerity_generate_unique_node_id();
+
+        $setup_count_number = count($open);
+
+        if ($setup_count_number) {
+          $aural[] = phutil_tag(
+            'a',
+            array(
+              'href' => '/config/issue/',
+            ),
+            pht(
+              '%s unresolved issues.',
+              new PhutilNumber($setup_count_number)));
+        } else {
+          $aural[] = pht('No issues.');
+        }
+
+        $setup_count_tag = phutil_tag(
+          'span',
+          array(
+            'id'    => $setup_count_id,
+            'class' => 'phabricator-main-menu-setup-count',
+          ),
+          $setup_count_number);
+
+        $setup_icon_tag = javelin_tag(
+          'span',
+          array(
+            'class' => 'phabricator-main-menu-setup-icon phui-icon-view '.
+                       'phui-font-fa fa-exclamation-circle',
+            'sigil' => 'menu-icon',
+          ),
+          '');
+
+        if ($setup_count_number) {
+          $container_classes[] = 'setup-unread';
+        }
+
+        $setup_tag = phutil_tag(
+          'a',
+          array(
+            'href'  => '/config/issue/',
+            'class' => implode(' ', $container_classes),
+            'id'    => $setup_id,
+          ),
+          array(
+            $setup_icon_tag,
+            $setup_count_tag,
+          ));
+
+        Javelin::initBehavior(
+          'aphlict-dropdown',
+          array(
+            'bubbleID'    => $setup_id,
+            'countID'     => $setup_count_id,
+            'dropdownID'  => $setup_dropdown_id,
+            'loadingText' => pht('Loading...'),
+            'uri'         => '/config/issue/panel/',
+            'countType'   => null,
+            'countNumber' => null,
+            'unreadClass' => 'setup-unread',
+            'favicon'     => $this->getFaviconURI('default'),
+            'message_favicon' => $this->getFaviconURI('message'),
+            'mention_favicon' => $this->getFaviconURI('mention'),
+          ));
+
+        $setup_notification_dropdown = javelin_tag(
+          'div',
+          array(
+            'id'    => $setup_dropdown_id,
+            'class' => 'phabricator-notification-menu',
+            'sigil' => 'phabricator-notification-menu',
+            'style' => 'display: none;',
+          ),
+          '');
+      }
+    }
+
     $dropdowns = array(
       $notification_dropdown,
       $message_notification_dropdown,
+      $setup_notification_dropdown,
     );
 
     return array(
       array(
         $bubble_tag,
         $message_tag,
+        $setup_tag,
       ),
       $dropdowns,
       $aural,

@@ -68,10 +68,10 @@ final class PhabricatorCalendarEventEditEngine
     }
 
     $frequency_options = array(
-      PhabricatorCalendarEvent::FREQUENCY_DAILY => pht('Daily'),
-      PhabricatorCalendarEvent::FREQUENCY_WEEKLY => pht('Weekly'),
-      PhabricatorCalendarEvent::FREQUENCY_MONTHLY => pht('Monthly'),
-      PhabricatorCalendarEvent::FREQUENCY_YEARLY => pht('Yearly'),
+      PhutilCalendarRecurrenceRule::FREQUENCY_DAILY => pht('Daily'),
+      PhutilCalendarRecurrenceRule::FREQUENCY_WEEKLY => pht('Weekly'),
+      PhutilCalendarRecurrenceRule::FREQUENCY_MONTHLY => pht('Monthly'),
+      PhutilCalendarRecurrenceRule::FREQUENCY_YEARLY => pht('Yearly'),
     );
 
     $fields = array(
@@ -142,6 +142,14 @@ final class PhabricatorCalendarEventEditEngine
         ->setConduitTypeDescription(pht('Mark the event as a recurring event.'))
         ->setValue($object->getIsRecurring());
 
+
+      $rrule = $object->newRecurrenceRule();
+      if ($rrule) {
+        $frequency = $rrule->getFrequency();
+      } else {
+        $frequency = null;
+      }
+
       $fields[] = id(new PhabricatorSelectEditField())
         ->setKey('frequency')
         ->setLabel(pht('Frequency'))
@@ -151,11 +159,13 @@ final class PhabricatorCalendarEventEditEngine
         ->setDescription(pht('Recurring event frequency.'))
         ->setConduitDescription(pht('Change the event frequency.'))
         ->setConduitTypeDescription(pht('New event frequency.'))
-        ->setValue($object->getFrequencyRule());
+        ->setValue($frequency);
     }
 
     if ($this->getIsCreate() || $object->getIsRecurring()) {
       $fields[] = id(new PhabricatorEpochEditField())
+        ->setIsLockable(false)
+        ->setIsDefaultable(false)
         ->setAllowNull(true)
         ->setKey('until')
         ->setLabel(pht('Repeat Until'))
@@ -164,52 +174,97 @@ final class PhabricatorCalendarEventEditEngine
         ->setDescription(pht('Last instance of the event.'))
         ->setConduitDescription(pht('Change when the event repeats until.'))
         ->setConduitTypeDescription(pht('New final event time.'))
-        ->setValue($object->getRecurrenceEndDate());
+        ->setValue($object->getUntilDateTimeEpoch());
     }
 
     $fields[] = id(new PhabricatorBoolEditField())
-        ->setKey('isAllDay')
-        ->setLabel(pht('All Day'))
-        ->setOptions(pht('Normal Event'), pht('All Day Event'))
-        ->setTransactionType(
-          PhabricatorCalendarEventAllDayTransaction::TRANSACTIONTYPE)
-        ->setDescription(pht('Marks this as an all day event.'))
-        ->setConduitDescription(pht('Make the event an all day event.'))
-        ->setConduitTypeDescription(pht('Mark the event as an all day event.'))
-        ->setValue($object->getIsAllDay());
+      ->setKey('isAllDay')
+      ->setLabel(pht('All Day'))
+      ->setOptions(pht('Normal Event'), pht('All Day Event'))
+      ->setTransactionType(
+        PhabricatorCalendarEventAllDayTransaction::TRANSACTIONTYPE)
+      ->setDescription(pht('Marks this as an all day event.'))
+      ->setConduitDescription(pht('Make the event an all day event.'))
+      ->setConduitTypeDescription(pht('Mark the event as an all day event.'))
+      ->setValue($object->getIsAllDay());
 
     $fields[] = id(new PhabricatorEpochEditField())
-        ->setKey('start')
-        ->setLabel(pht('Start'))
-        ->setTransactionType(
-          PhabricatorCalendarEventStartDateTransaction::TRANSACTIONTYPE)
-        ->setDescription(pht('Start time of the event.'))
-        ->setConduitDescription(pht('Change the start time of the event.'))
-        ->setConduitTypeDescription(pht('New event start time.'))
-        ->setValue($object->getViewerDateFrom());
+      ->setKey('start')
+      ->setLabel(pht('Start'))
+      ->setIsLockable(false)
+      ->setIsDefaultable(false)
+      ->setTransactionType(
+        PhabricatorCalendarEventStartDateTransaction::TRANSACTIONTYPE)
+      ->setDescription(pht('Start time of the event.'))
+      ->setConduitDescription(pht('Change the start time of the event.'))
+      ->setConduitTypeDescription(pht('New event start time.'))
+      ->setValue($object->getStartDateTimeEpoch());
 
     $fields[] = id(new PhabricatorEpochEditField())
-        ->setKey('end')
-        ->setLabel(pht('End'))
-        ->setTransactionType(
-          PhabricatorCalendarEventEndDateTransaction::TRANSACTIONTYPE)
-        ->setDescription(pht('End time of the event.'))
-        ->setConduitDescription(pht('Change the end time of the event.'))
-        ->setConduitTypeDescription(pht('New event end time.'))
-        ->setValue($object->getViewerDateTo());
+      ->setKey('end')
+      ->setLabel(pht('End'))
+      ->setIsLockable(false)
+      ->setIsDefaultable(false)
+      ->setTransactionType(
+        PhabricatorCalendarEventEndDateTransaction::TRANSACTIONTYPE)
+      ->setDescription(pht('End time of the event.'))
+      ->setConduitDescription(pht('Change the end time of the event.'))
+      ->setConduitTypeDescription(pht('New event end time.'))
+      ->setValue($object->getEndDateTimeEpoch());
 
     $fields[] = id(new PhabricatorIconSetEditField())
-        ->setKey('icon')
-        ->setLabel(pht('Icon'))
-        ->setIconSet(new PhabricatorCalendarIconSet())
-        ->setTransactionType(
-          PhabricatorCalendarEventIconTransaction::TRANSACTIONTYPE)
-        ->setDescription(pht('Event icon.'))
-        ->setConduitDescription(pht('Change the event icon.'))
-        ->setConduitTypeDescription(pht('New event icon.'))
-        ->setValue($object->getIcon());
+      ->setKey('icon')
+      ->setLabel(pht('Icon'))
+      ->setIconSet(new PhabricatorCalendarIconSet())
+      ->setTransactionType(
+        PhabricatorCalendarEventIconTransaction::TRANSACTIONTYPE)
+      ->setDescription(pht('Event icon.'))
+      ->setConduitDescription(pht('Change the event icon.'))
+      ->setConduitTypeDescription(pht('New event icon.'))
+      ->setValue($object->getIcon());
 
     return $fields;
   }
 
+  protected function willBuildEditForm($object, array $fields) {
+    $all_day_field = idx($fields, 'isAllDay');
+    $start_field = idx($fields, 'start');
+    $end_field = idx($fields, 'end');
+
+    if ($all_day_field) {
+      $is_all_day = $all_day_field->getValueForTransaction();
+
+      $control_ids = array();
+      if ($start_field) {
+        $control_ids[] = $start_field->getControlID();
+      }
+      if ($end_field) {
+        $control_ids[] = $end_field->getControlID();
+      }
+
+      Javelin::initBehavior(
+        'event-all-day',
+        array(
+          'allDayID' => $all_day_field->getControlID(),
+          'controlIDs' => $control_ids,
+        ));
+
+    } else {
+      $is_all_day = $object->getIsAllDay();
+    }
+
+    if ($is_all_day) {
+      if ($start_field) {
+        $start_field->setHideTime(true);
+      }
+
+      if ($end_field) {
+        $end_field->setHideTime(true);
+      }
+    }
+
+
+
+    return $fields;
+  }
 }

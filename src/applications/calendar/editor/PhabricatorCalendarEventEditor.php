@@ -34,25 +34,22 @@ final class PhabricatorCalendarEventEditor
     }
 
     $actor = $this->getActor();
+
+    $invitees = $event->getInvitees();
+
     $event->copyFromParent($actor);
     $event->setIsStub(0);
 
-    $invitees = $event->getParentEvent()->getInvitees();
+    $event->openTransaction();
+      $event->save();
+      foreach ($invitees as $invitee) {
+        $invitee
+          ->setEventPHID($event->getPHID())
+          ->save();
+      }
+    $event->saveTransaction();
 
-    $new_invitees = array();
-    foreach ($invitees as $invitee) {
-      $invitee = id(new PhabricatorCalendarEventInvitee())
-        ->setEventPHID($event->getPHID())
-        ->setInviteePHID($invitee->getInviteePHID())
-        ->setInviterPHID($invitee->getInviterPHID())
-        ->setStatus($invitee->getStatus())
-        ->save();
-
-      $new_invitees[] = $invitee;
-    }
-
-    $event->save();
-    $event->attachInvitees($new_invitees);
+    $event->attachInvitees($invitees);
   }
 
   public function getTransactionTypes() {
@@ -139,7 +136,7 @@ final class PhabricatorCalendarEventEditor
           WHERE phid IN (%Ls) AND availabilityCacheTTL >= %d',
         $user->getTableName(),
         $phids,
-        $object->getDateFromForCache());
+        $object->getStartDateTimeEpochForCache());
     }
 
     return $xactions;
@@ -159,9 +156,9 @@ final class PhabricatorCalendarEventEditor
     $recurrence_end_xaction =
       PhabricatorCalendarEventUntilDateTransaction::TRANSACTIONTYPE;
 
-    $start_date = $object->getDateFrom();
-    $end_date = $object->getDateTo();
-    $recurrence_end = $object->getRecurrenceEndDate();
+    $start_date = $object->getStartDateTimeEpoch();
+    $end_date = $object->getEndDateTimeEpoch();
+    $recurrence_end = $object->getUntilDateTimeEpoch();
     $is_recurring = $object->getIsRecurring();
 
     $errors = array();
@@ -200,6 +197,11 @@ final class PhabricatorCalendarEventEditor
   protected function shouldPublishFeedStory(
     PhabricatorLiskDAO $object,
     array $xactions) {
+
+    if ($object->isImportedEvent()) {
+      return false;
+    }
+
     return true;
   }
 
@@ -210,6 +212,11 @@ final class PhabricatorCalendarEventEditor
   protected function shouldSendMail(
     PhabricatorLiskDAO $object,
     array $xactions) {
+
+    if ($object->isImportedEvent()) {
+      return false;
+    }
+
     return true;
   }
 
@@ -285,9 +292,41 @@ final class PhabricatorCalendarEventEditor
       pht('EVENT DETAIL'),
       PhabricatorEnv::getProductionURI('/E'.$object->getID()));
 
+    $ics_attachment = $this->newICSAttachment($object);
+    $body->addAttachment($ics_attachment);
 
     return $body;
   }
 
+  protected function shouldApplyHeraldRules(
+    PhabricatorLiskDAO $object,
+    array $xactions) {
+    return true;
+  }
+
+  protected function buildHeraldAdapter(
+    PhabricatorLiskDAO $object,
+    array $xactions) {
+
+    return id(new PhabricatorCalendarEventHeraldAdapter())
+      ->setObject($object);
+  }
+
+  private function newICSAttachment(
+    PhabricatorCalendarEvent $event) {
+    $actor = $this->getActor();
+
+    $ics_data = id(new PhabricatorCalendarICSWriter())
+      ->setViewer($actor)
+      ->setEvents(array($event))
+      ->writeICSDocument();
+
+    $ics_attachment = new PhabricatorMetaMTAAttachment(
+      $ics_data,
+      $event->getICSFilename(),
+      'text/calendar');
+
+    return $ics_attachment;
+  }
 
 }

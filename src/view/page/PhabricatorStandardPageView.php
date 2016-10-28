@@ -136,6 +136,11 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView
     return (bool)$this->getUserPreference($column_key, false);
   }
 
+  public function getDurableColumnMinimize() {
+    $column_key = PhabricatorConpherenceColumnMinimizeSetting::SETTINGKEY;
+    return (bool)$this->getUserPreference($column_key, false);
+  }
+
   public function addQuicksandConfig(array $config) {
     $this->quicksandConfig = $config + $this->quicksandConfig;
     return $this;
@@ -459,24 +464,6 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView
           'or the error log.'));
     }
 
-    // Render the "you have unresolved setup issues..." warning.
-    $setup_warning = null;
-    if ($user && $user->getIsAdmin()) {
-      $open = PhabricatorSetupCheck::getOpenSetupIssueKeys();
-      if ($open) {
-        $classes[] = 'page-has-warning';
-        $setup_warning = phutil_tag_div(
-          'setup-warning-callout',
-          phutil_tag(
-            'a',
-            array(
-              'href' => '/config/issue/',
-              'title' => implode(', ', $open),
-            ),
-            pht('You have %d unresolved setup issue(s)...', count($open))));
-      }
-    }
-
     $main_page = phutil_tag(
       'div',
       array(
@@ -486,7 +473,6 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView
       array(
         $developer_warning,
         $header_chrome,
-        $setup_warning,
         phutil_tag(
           'div',
           array(
@@ -499,12 +485,17 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView
     $durable_column = null;
     if ($this->getShowDurableColumn()) {
       $is_visible = $this->getDurableColumnVisible();
+      $is_minimize = $this->getDurableColumnMinimize();
       $durable_column = id(new ConpherenceDurableColumnView())
         ->setSelectedConpherence(null)
         ->setUser($user)
         ->setQuicksandConfig($this->buildQuicksandConfig())
         ->setVisible($is_visible)
+        ->setMinimize($is_minimize)
         ->setInitialLoad(true);
+      if ($is_minimize) {
+        $this->classes[] = 'minimize-column';
+      }
     }
 
     Javelin::initBehavior('quicksand-blacklist', array(
@@ -814,6 +805,7 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView
 
     return array(
       'title' => $this->getTitle(),
+      'bodyClasses' => $this->getBodyClasses(),
       'aphlictDropdownData' => array(
         $dropdown_query->getNotificationData(),
         $dropdown_query->getConpherenceData(),
@@ -890,7 +882,8 @@ final class PhabricatorStandardPageView extends PhabricatorBarePageView
     } else {
       $content = $this->render();
       $response = id(new AphrontWebpageResponse())
-        ->setContent($content);
+        ->setContent($content)
+        ->setFrameable($this->getFrameable());
     }
 
     return $response;

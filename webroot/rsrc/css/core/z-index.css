@@ -68,13 +68,8 @@ div.phui-calendar-day-event {
   z-index: 4;
 }
 
-.setup-warning-callout {
-  z-index: 5;
-}
-
-.loading .messages-loading-mask,
-.loading .widgets-loading-mask {
-  z-index: 5;
+.conpherence-message-pane .conpherence-search-main {
+  z-index: 4;
 }
 
 .dark-console {
@@ -90,6 +85,11 @@ div.phui-calendar-day-event {
 }
 
 .aphront-developer-error-callout {
+  z-index: 6;
+}
+
+.loading .messages-loading-mask,
+.loading .widgets-loading-mask {
   z-index: 6;
 }
 
@@ -152,6 +152,14 @@ div.jx-typeahead-results {
 
 .phuix-autocomplete {
   z-index: 21;
+}
+
+.conpherence-participant-pane {
+  z-index: 25;
+}
+
+.conpherence-layout .conpherence-loading-mask {
+  z-index: 30;
 }
 
 .phuix-dropdown-menu {
